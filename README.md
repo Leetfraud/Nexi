@@ -30,7 +30,7 @@ See nexi-daemon/README.md for daemon-specific setup and requirements.
 
 Open design decisions and rationale live in docs/. Check there before
 re-deciding something that was already thought through - e.g.
-docs/DESIGN_NOTES_click_coordinates.md covers why click tokens do not
+docs/Design-notes.md covers why click tokens do not
 currently carry exact pixel position.
 
 ## Safety requirements (non-negotiable)
