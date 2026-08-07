@@ -1,5 +1,4 @@
 use rdev::{listen, Event, EventType};
-use serde::{Deserialize, Serialize};
 use chrono::Utc;
 use sled::Db;
 use std::sync::{Arc, Mutex};
@@ -10,18 +9,7 @@ use winapi::shared::minwindef::{DWORD, MAX_PATH};
 use winapi::um::processthreadsapi::OpenProcess;
 use winapi::um::winuser::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
 use winapi::um::psapi::GetModuleFileNameExW;
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct InputEvent {
-    event_type: String,
-    x: Option<f64>,
-    y: Option<f64>,
-    button: Option<String>,
-    key: Option<String>,
-    timestamp: String,
-    window_title: String,
-    process_name: String,
-}
+use nexi_daemon::InputEvent;
 
 type Clients = Arc<Mutex<Vec<TcpStream>>>;
 
