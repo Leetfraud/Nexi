@@ -5,13 +5,14 @@ use std::sync::{Arc, Mutex};
 use std::net::{TcpListener, TcpStream};
 use std::io::Write;
 use std::thread;
-use winapi::shared::minwindef::{DWORD, MAX_PATH};
+use winapi::shared::minwindef::DWORD;
 use winapi::um::processthreadsapi::OpenProcess;
 use winapi::um::winuser::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
 use winapi::um::psapi::GetModuleFileNameExW;
 use nexi_daemon::InputEvent;
 
 type Clients = Arc<Mutex<Vec<TcpStream>>>;
+type LastPos = Arc<Mutex<(f64, f64)>>;
 
 fn get_active_window() -> (String, String) {
     unsafe {
@@ -51,22 +52,28 @@ fn get_active_window() -> (String, String) {
     }
 }
 
-fn handle_event(event: Event, db: Arc<Mutex<Db>>, clients: Clients) {
+fn handle_event(event: Event, db: Arc<Mutex<Db>>, clients: Clients, last_pos: LastPos) {
     let now = Utc::now().to_rfc3339();
     let (window_title, process_name) = get_active_window();
 
     let input = match event.event_type {
-        EventType::MouseMove { x, y } => InputEvent {
-            event_type: "mouse_move".into(),
-            x: Some(x),
-            y: Some(y),
-            button: None,
+        EventType::MouseMove { x, y } => {
+            *last_pos.lock().unwrap() = (x, y);
+            InputEvent {
+                event_type: "mouse_move".into(),
+                x: Some(x),
+                y: Some(y),
+                button: None,
             key: None,
             timestamp: now.clone(),
             window_title,
             process_name,
-        },
-        EventType::ButtonPress(btn) => InputEvent {
+        }
+    }
+
+        EventType::ButtonPress(btn) => {
+        let (x,y)  = *last_pos.lock().unwrap();
+        InputEvent {
             event_type: "mouse_click".into(),
             x: None,
             y: None,
@@ -75,7 +82,9 @@ fn handle_event(event: Event, db: Arc<Mutex<Db>>, clients: Clients) {
             timestamp: now.clone(),
             window_title,
             process_name,
-        },
+        }
+    },
+
         EventType::KeyPress(key) => InputEvent {
             event_type: "key_press".into(),
             x: None,
@@ -106,6 +115,7 @@ fn main() {
     let db: Db = sled::open("D:/Project 5/Nexi/nexi-daemon/nexi_events.db").unwrap();
     let db = Arc::new(Mutex::new(db));
     let clients: Clients = Arc::new(Mutex::new(Vec::new()));
+    let last_pos: LastPos = Arc::new(Mutex::new((0.0, 0.0)));
 
     let listener = TcpListener::bind("127.0.0.1:9000").unwrap();
     println!("Nexi daemon listening on 127.0.0.1:9000");
@@ -125,10 +135,11 @@ fn main() {
 
     let db_clone = Arc::clone(&db);
     let clients_clone = Arc::clone(&clients);
+    let last_pos_clone = Arc::clone(&last_pos);
 
     println!("Capturing input events with window context...");
     if let Err(e) = listen(move |event| {
-        handle_event(event, Arc::clone(&db_clone), Arc::clone(&clients_clone))
+        handle_event(event, Arc::clone(&db_clone), Arc::clone(&clients_clone), Arc::clone(&last_pos_clone));
     }) {
         eprintln!("Error: {:?}", e);
     }

@@ -8,6 +8,9 @@ pub struct InputEvent {
     pub button: Option<String>,
     pub key: Option<String>,
     pub timestamp: String,
+    #[serde(default)]
     pub window_title: String,
+    #[serde(default)]
     pub process_name: String,
+    
 }

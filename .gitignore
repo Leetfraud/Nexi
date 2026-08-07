@@ -1,2 +1,4 @@
-/target
+nexi-daemon/target
 nexi_events.db
+.venv/
+__pycache__/
