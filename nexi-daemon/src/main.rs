@@ -7,19 +7,29 @@ use std::io::Write;
 use std::thread;
 use winapi::shared::minwindef::DWORD;
 use winapi::um::processthreadsapi::OpenProcess;
-use winapi::um::winuser::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
+use winapi::um::winuser::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, GetWindowRect};
+use winapi::shared::windef::RECT;
 use winapi::um::psapi::GetModuleFileNameExW;
 use nexi_daemon::InputEvent;
 
 type Clients = Arc<Mutex<Vec<TcpStream>>>;
 type LastPos = Arc<Mutex<(f64, f64)>>;
+type WindowRect = Arc<Mutex<RECT>>;
 
-fn get_active_window() -> (String, String) {
+fn get_active_window() -> (String, String, f64, f64, f64, f64) {
     unsafe {
         let hwnd = GetForegroundWindow();
         if hwnd.is_null() {
-            return ("unknown".into(), "unknown".into());
+            return ("unknown".into(), "unknown".into(), 0.0, 0.0, 0.0, 0.0);
         }
+    
+
+        let mut rect: RECT = std::mem::zeroed();
+        GetWindowRect(hwnd, &mut rect);
+        let win_left = rect.left as f64;
+        let win_top = rect.top as f64;
+        let win_width = (rect.right - rect.left) as f64;
+        let win_height = (rect.bottom - rect.top) as f64;
 
         // Get window title
         let mut title_buf = [0u16; 512];
@@ -33,8 +43,10 @@ fn get_active_window() -> (String, String) {
         GetWindowThreadProcessId(hwnd, &mut pid);
         let handle = OpenProcess(0x0400 | 0x0010, 0, pid);
         if handle.is_null() {
-            return (title, "unknown".into());
+            return (title, "unknown".into(), win_left, win_top, win_width, win_height);
         }
+        
+
 
         let mut proc_buf = [0u16; 512];
         GetModuleFileNameExW(handle, std::ptr::null_mut(), proc_buf.as_mut_ptr(), 512);
@@ -48,17 +60,26 @@ fn get_active_window() -> (String, String) {
             .unwrap_or("unknown")
             .to_string();
 
-        (title, proc_name)
-    }
+        (title, proc_name, win_left, win_top, win_width, win_height)
+}
 }
 
 fn handle_event(event: Event, db: Arc<Mutex<Db>>, clients: Clients, last_pos: LastPos) {
     let now = Utc::now().to_rfc3339();
-    let (window_title, process_name) = get_active_window();
+    let (window_title, process_name, win_left, win_top, win_width, win_height) = get_active_window();
+
+    let rel = |x: f64, y: f64| -> (Option<f64>, Option<f64>) {
+        if win_width > 0.0 && win_height > 0.0 {
+            (Some((x - win_left) / win_width), Some((y - win_top) / win_height))
+        } else {
+            (None, None)
+        }
+    };
 
     let input = match event.event_type {
         EventType::MouseMove { x, y } => {
             *last_pos.lock().unwrap() = (x, y);
+            let (rel_x, rel_y) = rel(x, y);
             InputEvent {
                 event_type: "mouse_move".into(),
                 x: Some(x),
@@ -68,20 +89,33 @@ fn handle_event(event: Event, db: Arc<Mutex<Db>>, clients: Clients, last_pos: La
             timestamp: now.clone(),
             window_title,
             process_name,
+            window_left: win_left,
+            window_top: win_top,
+            window_width: win_width,
+            window_height: win_height,
+            rel_x,
+            rel_y,
         }
     }
 
         EventType::ButtonPress(btn) => {
         let (x,y)  = *last_pos.lock().unwrap();
+        let (rel_x, rel_y) = rel(x, y);
         InputEvent {
             event_type: "mouse_click".into(),
-            x: None,
-            y: None,
+            x: Some(x),
+            y: Some(y),
             button: Some(format!("{:?}", btn)),
             key: None,
             timestamp: now.clone(),
             window_title,
             process_name,
+            window_left: win_left,
+            window_top: win_top,
+            window_width: win_width,
+            window_height: win_height,
+            rel_x,
+            rel_y,
         }
     },
 
@@ -94,6 +128,12 @@ fn handle_event(event: Event, db: Arc<Mutex<Db>>, clients: Clients, last_pos: La
             timestamp: now.clone(),
             window_title,
             process_name,
+            window_left: win_left,
+            window_top: win_top,
+            window_width: win_width,
+            window_height: win_height,
+            rel_x: None,
+            rel_y: None,
         },
         _ => return,
     };

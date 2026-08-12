@@ -12,5 +12,15 @@ pub struct InputEvent {
     pub window_title: String,
     #[serde(default)]
     pub process_name: String,
+    #[serde(default)]
+    pub window_left: f64,
+    #[serde(default)]
+    pub window_top: f64,
+    #[serde(default)]
+    pub window_width: f64,
+    #[serde(default)]
+    pub window_height: f64,
+    pub rel_x: Option<f64>,
+    pub rel_y: Option<f64>,
     
 }

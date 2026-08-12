@@ -1,6 +1,7 @@
 use nexi_daemon::InputEvent;
 use sled::Db;
 use chrono::{DateTime, Utc};
+use std::collections::{HashMap, HashSet};
 
 /// Gap (in seconds) after which we consider the user to have stepped
 /// away, and start a new session.
@@ -15,7 +16,7 @@ struct Session {
     events: Vec<InputEvent>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Token {
     Switch(String),
     Click(String),
@@ -141,6 +142,94 @@ fn abstract_session(session: &Session) -> Vec<Token> {
     tokens
 }
 
+
+const MIN_PATTERN_LEN: usize = 3;
+const MAX_PATTERN_LEN: usize = 8;
+const MIN_OCCURRENCES: usize = 3;
+const MIN_SESSIONS: usize = 2;
+
+#[derive(Debug)]
+struct WorkflowPattern {
+    tokens: Vec<Token>,
+    occurrences: usize,
+    session_count: usize,
+}
+
+/// Stage 4: slide windows of length MIN_PATTERN_LEN..=MAX_PATTERN_LEN over
+/// every session's token sequence, count how often each exact window
+/// recurs, and in how many distinct sessions. Only keeps sequences that
+/// clear both MIN_OCCURRENCES and MIN_SESSIONS — a pattern that repeated
+/// 5 times in one session but never appeared elsewhere isn't a workflow,
+/// it's a one-off habit from that sitting.
+fn mine_patterns(sessions: &[Vec<Token>]) -> Vec<WorkflowPattern> {
+    let mut counts: HashMap<Vec<Token>, (usize, HashSet<usize>)> = HashMap::new();
+
+    for (session_idx, tokens) in sessions.iter().enumerate() {
+        for window_len in MIN_PATTERN_LEN..=MAX_PATTERN_LEN {
+            if tokens.len() < window_len {
+                continue;
+            }
+            for start in 0..=(tokens.len() - window_len) {
+                let window = tokens[start..start + window_len].to_vec();
+                let entry = counts.entry(window).or_insert_with(|| (0, HashSet::new()));
+                entry.0 += 1;
+                entry.1.insert(session_idx);
+            }
+        }
+    }
+
+    let mut patterns: Vec<WorkflowPattern> = counts
+        .into_iter()
+        .filter(|(_, (count, session_set))| {
+            *count >= MIN_OCCURRENCES && session_set.len() >= MIN_SESSIONS
+        })
+        .map(|(tokens, (count, session_set))| WorkflowPattern {
+            tokens,
+            occurrences: count,
+            session_count: session_set.len(),
+        })
+        .collect();
+
+    patterns.sort_by(|a, b| b.occurrences.cmp(&a.occurrences));
+    patterns
+}
+
+    /// True if `needle` appears as a contiguous subsequence anywhere in
+/// `haystack`.
+fn contains_subsequence(haystack: &[Token], needle: &[Token]) -> bool {
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// Drops any pattern that's fully contained, as a contiguous subsequence,
+/// inside a longer pattern that also survived thresholding. A 3-token
+/// fragment of a real 6-token workflow isn't a separate pattern — it's
+/// noise from mine_patterns scanning every window length independently.
+/// Once the full 6-token version exists, the fragment is discarded.
+fn dedupe_maximal(mut patterns: Vec<WorkflowPattern>) -> Vec<WorkflowPattern> {
+    // Longest first, so every fragment gets checked against the fullest
+    // version already accepted before we decide to drop it.
+    patterns.sort_by(|a, b| b.tokens.len().cmp(&a.tokens.len()));
+
+    let mut kept: Vec<WorkflowPattern> = Vec::new();
+
+    'outer: for candidate in patterns {
+        for existing in &kept {
+            if existing.tokens.len() > candidate.tokens.len()
+                && contains_subsequence(&existing.tokens, &candidate.tokens)
+            {
+                continue 'outer; // candidate is a fragment of something already kept
+            }
+        }
+        kept.push(candidate);
+    }
+
+    kept.sort_by(|a, b| b.occurrences.cmp(&a.occurrences));
+    kept
+}
+
 fn main() {
     let db: Db = sled::open("D:/Project 5/Nexi/nexi-daemon/nexi_events.db").unwrap();
 
@@ -153,16 +242,26 @@ fn main() {
     let sessions = segment_sessions(filtered);
     println!("Segmented into {} sessions", sessions.len());
 
-    for (i, session) in sessions.iter().enumerate() {
-        let tokens = abstract_session(session);
-        println!(
-            "\nSession {} ({} events -> {} tokens):",
-            i,
-            session.events.len(),
-            tokens.len()
-        );
-        for token in &tokens {
-            println!("  {:?}", token);
-        }
+    let mut all_sessions: Vec<Vec<Token>> = Vec::new();
+
+for (i, session) in sessions.iter().enumerate() {
+    let tokens = abstract_session(session);
+    println!(
+        "\nSession {} ({} events -> {} tokens):",
+        i, session.events.len(), tokens.len()
+    );
+    for token in &tokens {
+        println!("  {:?}", token);
     }
+    all_sessions.push(tokens);
+}
+
+let patterns = dedupe_maximal(mine_patterns(&all_sessions));
+println!("\n=== {} recurring patterns found ===", patterns.len());
+for p in &patterns {
+    println!(
+        "  [{}x across {} sessions] {:?}",
+        p.occurrences, p.session_count, p.tokens
+    );
+}
 }
