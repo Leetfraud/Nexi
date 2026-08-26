@@ -16,10 +16,54 @@ struct Session {
     events: Vec<InputEvent>,
 }
 
+
+/// Coarse 3x3 grid position of a click within its window's bounding
+/// box. Computed from window-relative coordinates (rel_x, rel_y) so it
+/// stays stable across window moves and resizes, rather than raw
+/// screen pixels. Unknown covers events with no rect data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Bucket {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    MidLeft,
+    MidCenter,
+    MidRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+    Unknown,
+}
+
+fn bucket(rel_x: Option<f64>, rel_y: Option<f64>) -> Bucket {
+    let (Some(x), Some(y)) = (rel_x, rel_y) else {
+        return Bucket::Unknown;
+    };
+    let x = x.clamp(0.0, 1.0);
+    let y = y.clamp(0.0, 1.0);
+
+    let col = if x < 1.0 / 3.0 { 0 } else if x < 2.0 / 3.0 { 1 } else { 2 };
+    let row = if y < 1.0 / 3.0 { 0 } else if y < 2.0 / 3.0 { 1 } else { 2 };
+
+    match (row, col) {
+        (0, 0) => Bucket::TopLeft,
+        (0, 1) => Bucket::TopCenter,
+        (0, 2) => Bucket::TopRight,
+        (1, 0) => Bucket::MidLeft,
+        (1, 1) => Bucket::MidCenter,
+        (1, 2) => Bucket::MidRight,
+        (2, 0) => Bucket::BottomLeft,
+        (2, 1) => Bucket::BottomCenter,
+        _ => Bucket::BottomRight,
+    }
+}
+
+
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Token {
     Switch(String),
-    Click(String),
+    Click(String, Bucket),
     Type(String),
 }
 
@@ -112,7 +156,8 @@ fn abstract_session(session: &Session) -> Vec<Token> {
             "mouse_click" => {
                 typing = None; // a click always ends any active typing burst
                 let button = event.button.clone().unwrap_or_else(|| "unknown".into());
-                tokens.push(Token::Click(button));
+                let b = bucket(event.rel_x, event.rel_y);
+                tokens.push(Token::Click(button, b));
             }
             "key_press" => {
                 let now = parse_ts(&event.timestamp);
