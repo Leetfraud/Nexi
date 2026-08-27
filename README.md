@@ -2,8 +2,8 @@
 
 A locally-run, personality-driven AI desktop companion with passive workflow learning.
 
-Nexi watches how you use your computer — mouse, keyboard, and window
-context — and learns to reproduce your workflows without being explicitly
+Nexi watches how you use your computer mouse, keyboard, and window
+context and learns to reproduce your workflows without being explicitly
 programmed to. Final Year Project, University of Lahore, Department of
 Software Engineering.
 
