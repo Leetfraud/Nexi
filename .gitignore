@@ -2,3 +2,6 @@
 nexi_events.db
 .venv/
 __pycache__/
+/nexi-daemon/target
+/nexi-daemon/nexi_events.db
+/nexi-core/models
