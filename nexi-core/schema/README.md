@@ -47,3 +47,18 @@ Action rather than being re-derived by the executor:
   classifier returned — including two-word forms like "shut everything down".
 
 `action.is_executable()` is the single check nexi-ui should use.
+
+## The reply: `ActionResult`
+
+`result.py` is the other half of the contract — what nexi-ui sends back. **Also
+mirrored in `nexi-ui/schema`.**
+
+| Field | Type | Notes |
+|---|---|---|
+| `status` | enum | `executed`, `declined`, `failed`, `unsupported` |
+| `detail` | str | free text for the human: the error, or what was asked |
+
+`declined` exists because `requires_confirmation` means the user can say no.
+Without a reply path nexi-core would never learn that happened, so the
+confirmation gate would have no closed loop and no success rate could be
+measured. See `ipc/README.md` for the wire format.
