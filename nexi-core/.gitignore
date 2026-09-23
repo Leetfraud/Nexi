@@ -1,2 +1,5 @@
 /target
 nexi_events.db
+.venv/
+__pycache__/
+models/whisper/
