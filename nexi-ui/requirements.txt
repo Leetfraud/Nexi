@@ -1,0 +1,5 @@
+PyQt5
+pyautogui
+pynput
+pydantic>=2
+piper-tts
