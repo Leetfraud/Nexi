@@ -1,8 +1,8 @@
 use sled::Db;
-use nexi_daemon::InputEvent;
+use nexi_daemon::{events_db_path, InputEvent};
 
 fn main() {
-    let db: Db = sled::open("D:/Project 5/Nexi/nexi-daemon/nexi_events.db").unwrap();
+    let db: Db = sled::open(events_db_path()).unwrap();
     
     println!("Events stored in database:");
     println!("──────────────────────────");

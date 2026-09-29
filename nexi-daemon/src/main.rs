@@ -10,7 +10,7 @@ use winapi::um::processthreadsapi::OpenProcess;
 use winapi::um::winuser::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, GetWindowRect};
 use winapi::shared::windef::RECT;
 use winapi::um::psapi::GetModuleFileNameExW;
-use nexi_daemon::InputEvent;
+use nexi_daemon::{events_db_path, InputEvent};
 
 type Clients = Arc<Mutex<Vec<TcpStream>>>;
 type LastPos = Arc<Mutex<(f64, f64)>>;
@@ -152,7 +152,7 @@ fn handle_event(event: Event, db: Arc<Mutex<Db>>, clients: Clients, last_pos: La
 }
 
 fn main() {
-    let db: Db = sled::open("D:/Project 5/Nexi/nexi-daemon/nexi_events.db").unwrap();
+    let db: Db = sled::open(events_db_path()).unwrap();
     let db = Arc::new(Mutex::new(db));
     let clients: Clients = Arc::new(Mutex::new(Vec::new()));
     let last_pos: LastPos = Arc::new(Mutex::new((0.0, 0.0)));

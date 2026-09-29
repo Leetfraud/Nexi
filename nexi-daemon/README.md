@@ -14,47 +14,15 @@ The intended consumer is the Python listener in `../nexi-core/listener.py`.
 | | |
 |---|---|
 | OS | Windows only — the daemon calls Win32 (`GetForegroundWindow`, `GetModuleFileNameExW`) directly |
-| Rust | 1.96.0 (verified); any recent stable with the MSVC toolchain works |
+| Rust | Stable Windows GNU toolchain (`stable-x86_64-pc-windows-gnu`) |
 | Python | 3.14 (only needed for the listener; a venv already exists at `../.venv`) |
 
 ---
 
-## Known issue: the current source does not compile
+## Build status
 
-`src/main.rs` has five duplicate `use` statements on **lines 17–21** that shadow
-the imports already made on lines 11–16. `cargo build` fails with five `E0252`
-errors before anything else happens:
-
-```
-error[E0252]: the name `GetForegroundWindow` is defined multiple times
-error[E0252]: the name `GetWindowTextW` is defined multiple times
-error[E0252]: the name `OpenProcess` is defined multiple times
-error[E0252]: the name `GetWindowThreadProcessId` is defined multiple times
-error[E0252]: the name `DWORD` is defined multiple times
-```
-
-**Fix:** delete lines 17–21 of `src/main.rs`. They are pure duplicates — nothing
-else references them.
-
-```rust
-// delete these five lines:
-use winapi::um::winuser::{GetForegroundWindow, GetWindowTextW};
-use winapi::um::processthreadsapi::OpenProcess;
-use winapi::um::psapi::GetModuleFileNameExW;   // keep this one — line 19 is NOT a duplicate
-use winapi::um::winuser::GetWindowThreadProcessId;
-use winapi::shared::minwindef::DWORD;
-```
-
-Careful: `GetModuleFileNameExW` (line 19) is the one import in that block that is
-*not* duplicated and *is* used by `get_active_window()`. Keep it.
-
-After that the crate builds with warnings only (a handful of genuinely unused
-imports on lines 9–15 — `OsString`, `OsStringExt`, `MAX_PATH`, `CloseHandle`,
-`GetModuleBaseNameW`, `PROCESS_QUERY_LIMITED_INFORMATION`).
-
-The prebuilt `target/debug/nexi-daemon.exe` in this tree is from an earlier,
-working revision, so it runs even while the source is broken. Don't mistake that
-for a successful build.
+`cargo check --bins` passes. The existing unused `WindowRect` type alias produces
+a warning. The old duplicate-import compile errors are resolved.
 
 ---
 
@@ -66,10 +34,11 @@ cargo build              # debug
 cargo build --release    # optimized
 ```
 
-This produces two binaries:
+This produces three binaries:
 
 - `nexi-daemon` — the capture daemon (`src/main.rs`)
 - `read_db` — a one-shot dump of everything in the database (`src/bin/read_db.rs`)
+- `extract_patterns` — mines recurring patterns and saves `patterns.json`.
 
 ---
 
@@ -207,17 +176,10 @@ discarded.
 
 ## Configuration
 
-There is none — everything is hardcoded in `src/main.rs`. To change it, edit and
-rebuild:
-
-| what | value | where |
-|---|---|---|
-| Bind address | `127.0.0.1:9000` | `src/main.rs:131` |
-| Database path | `D:/Project 5/Nexi/nexi-daemon/nexi_events.db` | `src/main.rs:127` |
-
-The absolute database path means the daemon must run on a machine where
-`D:\Project 5\Nexi\nexi-daemon\` exists; it does not resolve relative to the
-working directory. `src/bin/read_db.rs:4` hardcodes the same path.
+The shared `EVENTS_DB_PATH` constant in `src/lib.rs` configures the database for
+all three binaries. Edit it and rebuild when moving to another machine.
+`patterns.json` is written beside that database, independent of the working directory.
+The TCP bind address remains `127.0.0.1:9000` in `src/main.rs`.
 
 The database directory is in `.gitignore` (though `nexi_events.db/db` was
 committed before the ignore rule was added). It grows without bound — mouse
@@ -252,16 +214,59 @@ the lock screen).
 
 ---
 
-## Relationship to `nexi-core`
+## Relationship to the other modules
 
-`../nexi-core` is an earlier variant of this same daemon: its `Cargo.toml`
-declares the **same package name** (`nexi-daemon`), and its `src/main.rs` is the
-same program without the window/process tagging. Both crates hardcode the same
-port (`9000`) and the same database path
-(`D:/Project 5/Nexi/nexi-daemon/nexi_events.db`), so **they cannot run at the
-same time** — whichever starts second panics on the sled lock or the port bind.
+Faseeh owns this daemon and workflow learning. Azmeer's `nexi-core` owns voice
+and intent routing; Malaika's `nexi-ui` owns desktop execution and safety.
+The pattern export is a handoff artifact; workflow lookup and replay integration
+remain to be implemented.
 
-Use this crate for the daemon. Use `nexi-core` only for `listener.py`.
+## Extract and name patterns
 
-There is no workspace root; each directory is a separate crate with its own git
-repository, and `cargo` commands must be run from inside one of them.
+Stop the daemon first: sled allows only one process to open the database.
+
+```powershell
+cargo run --bin extract_patterns
+```
+
+The extractor drops mouse movement, splits sessions after 30 seconds idle, and
+mines sequences of 3–8 tokens occurring at least three times across two sessions.
+It removes fragments contained in longer qualifying patterns, then writes
+`patterns.json` beside the configured database. An empty result writes an empty
+`patterns` array.
+
+The version 1 JSON contains:
+
+- `schema_version`, `generated_at`, and `source_db`.
+- Each pattern's `id`, editable `name`, `tokens`, `occurrences`, `session_count`,
+  and `matches`.
+- Each match's `session_index`, `token_start/end`, `event_start/end`, and
+  `source_events`. Indices are zero-based, with exclusive end indices.
+  Event indices refer to the filtered session, not database positions.
+- Each source event's `db_key` (the exact sled key as a JSON byte array) and
+  `event` (the original decoded InputEvent). Mouse movement is excluded.
+  A typing token retains every contributing keypress; a Switch token references
+  the event where the process change was observed.
+
+IDs use `pattern_v1_` plus the hexadecimal encoding of the token JSON. They
+are deliberately verbose but collision-free and stable for an unchanged token
+sequence under this schema, regardless of extraction order.
+
+Edit a pattern's `name` in the JSON, for example to `Morning startup`. Reruns
+preserve names for token sequences still detected. This file is a snapshot:
+patterns no longer detected are removed, and their names are not archived.
+Malformed existing JSON, an unsupported schema, or a different source database
+causes an error rather than overwriting the previous export. The writer syncs
+a sibling temporary file before replacing the export.
+
+Patterns are evidence for workflow learning, not executable replay scripts.
+Token buckets alone cannot reliably locate a replay target, and key releases
+are not recorded. Replay steps and safety checks need a separate contract.
+Exports contain recorded input and are excluded from Git.
+
+Validation:
+
+```powershell
+cargo test --bin extract_patterns
+cargo check --bins
+```
